@@ -1,21 +1,28 @@
-mod fixtures;
-
 use assert_cmd::Command;
-use fixtures::{server, Error, TestServer, FILES};
 use predicates::str::contains;
 use reqwest::blocking::ClientBuilder;
 use rstest::rstest;
 use select::{document::Document, node::Node};
 
+mod fixtures;
+
+use crate::fixtures::{server, Error, TestServer, FILES};
+
 /// Can start the server with TLS and receive encrypted responses.
 #[rstest]
-fn tls_works(
-    #[with(&[
-        "--tls-cert", "tests/data/cert.pem",
-        "--tls-key", "tests/data/key.pem"
-    ])]
-    server: TestServer,
-) -> Result<(), Error> {
+#[case(server(&[
+        "--tls-cert", "tests/data/cert_rsa.pem",
+        "--tls-key", "tests/data/key_pkcs8.pem",
+]))]
+#[case(server(&[
+        "--tls-cert", "tests/data/cert_rsa.pem",
+        "--tls-key", "tests/data/key_pkcs1.pem",
+]))]
+#[case(server(&[
+        "--tls-cert", "tests/data/cert_ec.pem",
+        "--tls-key", "tests/data/key_ec.pem",
+]))]
+fn tls_works(#[case] server: TestServer) -> Result<(), Error> {
     let client = ClientBuilder::new()
         .danger_accept_invalid_certs(true)
         .build()?;
@@ -32,7 +39,7 @@ fn tls_works(
 #[rstest]
 fn wrong_path_cert() -> Result<(), Error> {
     Command::cargo_bin("miniserve")?
-        .args(&["--tls-cert", "wrong", "--tls-key", "tests/data/key.pem"])
+        .args(["--tls-cert", "wrong", "--tls-key", "tests/data/key.pem"])
         .assert()
         .failure()
         .stderr(contains("Error: Couldn't access TLS certificate \"wrong\""));
@@ -44,7 +51,7 @@ fn wrong_path_cert() -> Result<(), Error> {
 #[rstest]
 fn wrong_path_key() -> Result<(), Error> {
     Command::cargo_bin("miniserve")?
-        .args(&["--tls-cert", "tests/data/cert.pem", "--tls-key", "wrong"])
+        .args(["--tls-cert", "tests/data/cert.pem", "--tls-key", "wrong"])
         .assert()
         .failure()
         .stderr(contains("Error: Couldn't access TLS key \"wrong\""));
