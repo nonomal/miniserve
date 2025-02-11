@@ -1,21 +1,10 @@
-@use "sass:selector";
+@use "themes/archlinux" with ($generate_default: false);
+@use "themes/monokai" with ($generate_default: false);
+@use "themes/squirrel" with ($generate_default: false);
+@use "themes/zenburn" with ($generate_default: false);
 
 // theme colors can be found at the bottom
 $themes: squirrel, archlinux, monokai, zenburn;
-
-// This returns a selector that matches body when no theme class is set,
-// in which case the default light/dark mode themes should be used.
-// The result of this function can be used with #{...} interpolation
-// in a selector list.
-@function body_not_themed() {
-    $s: unquote("body");
-    @each $t in $themes {
-        $s: selector.append($s, unquote(":not(.theme_#{$t})"));
-    }
-    @return $s;
-}
-
-
 
 html {
     font-smoothing: antialiased;
@@ -27,7 +16,7 @@ html {
 body {
     margin: 0;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Helvetica, Arial, sans-serif;
-    font-weight: 300;
+    font-weight: normal;
     color: var(--text_color);
     background: var(--background);
     position: relative;
@@ -52,6 +41,21 @@ body {
     padding-top: 1.5rem;
     font-size: 0.7em;
     color: var(--footer_color);
+
+    .downloadDirectory {
+        display: flex;
+        flex-direction: row;
+        justify-content: center;
+        flex-wrap: wrap;
+
+        .cmd {
+            margin: 0;
+            padding-left: 5px;
+
+            line-height: 13px;
+            font-family: monospace;
+        }
+    }
 }
 
 a {
@@ -87,6 +91,14 @@ a.file,
     }
 }
 
+a.file::before {
+    content: "📃 ";
+}
+
+a.directory::before {
+    content: "📁 ";
+}
+
 a.directory:hover {
     color: var(--directory_link_color);
 }
@@ -95,11 +107,18 @@ a.file:hover {
     color: var(--file_link_color);
 }
 
+a.symlink,
+a.symlink:visited {
+    font-weight: bold;
+    color: var(--symlink_color);
+}
+
 .symlink-symbol::after {
     content: "⇢";
     display: inline-block;
     border: 1px solid;
     margin-left: 0.5rem;
+    margin-right: 0.5rem;
     border-radius: 0.2rem;
     padding: 0 0.1rem;
 }
@@ -110,7 +129,7 @@ nav {
     justify-content: flex-end;
 }
 
-nav > div {
+nav>div {
     position: relative;
     margin-left: 0.5rem;
 }
@@ -123,7 +142,7 @@ nav p {
     color: var(--change_theme_link_color);
 }
 
-nav p + * {
+nav p+* {
     display: none;
     position: absolute;
     left: 0;
@@ -141,12 +160,12 @@ nav p + * {
     }
 }
 
-nav > div:hover p {
+nav>div:hover p {
     cursor: pointer;
     color: var(--switch_theme_link_color);
 }
 
-nav > div:hover p + * {
+nav>div:hover p+* {
     display: block;
     border-top: 1px solid var(--switch_theme_border);
 }
@@ -156,7 +175,7 @@ nav .qrcode {
     background: var(--switch_theme_background);
 }
 
-nav .qrcode img {
+nav .qrcode svg {
     display: block;
 }
 
@@ -188,21 +207,6 @@ nav .theme li a:hover {
     color: var(--change_theme_link_color_hover);
 }
 
-%active_theme_link {
-    font-weight: bold;
-    color: var(--switch_theme_active);
-}
-
-@each $theme in $themes {
-    body.theme_#{$theme} nav .theme li.theme_#{$theme} a {
-        @extend %active_theme_link;
-    }
-}
-
-#{body_not_themed()} nav .theme li.theme_default a {
-    @extend %active_theme_link;
-}
-
 p {
     margin: 0;
     padding: 0;
@@ -230,6 +234,11 @@ table tbody tr td {
     line-height: 1.125rem;
 }
 
+table tbody tr td p {
+    display: flex;
+    align-items: center;
+}
+
 table thead tr th {
     padding: 0.5rem 0.625rem 0.625rem;
     font-weight: bold;
@@ -240,7 +249,7 @@ table thead th.size {
 }
 
 table thead th.date {
-    width: 15em;
+    width: 21em;
 }
 
 table tbody tr:nth-child(odd) {
@@ -268,29 +277,26 @@ td.date-cell {
     justify-content: space-between;
 }
 
-.at {
-    color: var(--at_color);
-}
-
 .history {
     color: var(--date_text_color);
 }
 
-.file-entry {
-    display: flex;
-    justify-content: space-between;
-}
-
-span.size {
+span.size, span.mobile-info.history {
+    white-space: nowrap;
     border-radius: 1rem;
     background: var(--size_background_color);
     padding: 0 0.25rem;
+    margin: 0 0.25rem;
     font-size: 0.7rem;
     color: var(--size_text_color);
 }
 
 .mobile-info {
     display: none;
+}
+
+.mobile-info a, .mobile-info a:visited {
+    color: var(--size_text_color);
 }
 
 th a,
@@ -313,8 +319,8 @@ th span.active span {
 
 .back {
     position: fixed;
-    width: 3.8rem;
-    height: 3.8rem;
+    width: 3rem;
+    height: 3rem;
     align-items: center;
     justify-content: center;
     bottom: 3rem;
@@ -324,6 +330,8 @@ th span.active span {
     box-shadow: 0 0 8px -4px #888888;
     color: var(--back_button_link_color);
     display: none;
+    padding: 0;
+    font-size: 2em;
 }
 
 .back:visited {
@@ -372,39 +380,52 @@ th span.active span {
     margin-right: 1rem;
 }
 
-.upload {
+.toolbar_box_group {
+    min-width: max-content;
+}
+
+.toolbar_box {
     margin-top: 1rem;
     display: flex;
     justify-content: flex-end;
 }
 
-.upload p {
+.toolbar_box p {
     font-size: 0.8rem;
     margin-bottom: 1rem;
     color: var(--upload_text_color);
 }
 
-.upload form {
+.toolbar_box form {
     padding: 1rem;
     border: 1px solid var(--upload_form_border_color);
     background: var(--upload_form_background);
 }
 
-.upload button {
+.toolbar_box input {
+    padding: 0.5rem;
+    margin-right: 0.2rem;
+    border-radius: 0.2rem;
+    border: 0;
+    display: inline;
+}
+
+.toolbar_box button {
     background: var(--upload_button_background);
     padding: 0.5rem;
     border-radius: 0.2rem;
     color: var(--upload_button_text_color);
     border: none;
+    min-width: max-content;
 }
 
-.upload div {
+.toolbar_box div {
     display: flex;
     align-items: baseline;
     justify-content: space-between;
 }
 
-.drag-form {
+.form, .drag-form {
     display: none;
     background: var(--drag_background);
     position: absolute;
@@ -413,9 +434,10 @@ th span.active span {
     height: calc(100% - 1rem);
     text-align: center;
     z-index: 2;
+    margin: 0 5px;
 }
 
-.drag-title {
+.form_title {
     position: fixed;
     color: var(--drag_text_color);
     top: 50%;
@@ -447,6 +469,13 @@ th span.active span {
     margin-top: 4rem;
 }
 
+@media (min-width: 900px) {
+    .toolbar_box_group {
+        display: flex;
+        justify-content: flex-end;
+    }
+}
+
 @media (max-width: 760px) {
     nav {
         padding: 0 2.5rem;
@@ -466,7 +495,9 @@ th span.active span {
     }
 
     .mobile-info {
-        display: block;
+        display: inline-flex;
+        align-items: center;
+        margin: auto;
     }
 
     table tbody tr td {
@@ -474,9 +505,12 @@ th span.active span {
         padding-bottom: 0;
     }
 
-    a.directory {
-        display: block;
+    a {
         padding: 0.5625rem 0;
+    }
+
+    a.directory {
+        flex-grow: 1;
     }
 
     .file-entry {
@@ -485,9 +519,7 @@ th span.active span {
 
     a.root,
     a.file {
-        display: inline-block;
-        flex: 1;
-        padding: 0.5625rem 0;
+        flex-grow: 1;
     }
 
     .back {
@@ -523,221 +555,45 @@ th span.active span {
     }
 }
 
+@mixin theme($name) {
+    @if $name == squirrel {
+        @include squirrel.theme();
+    }
 
+    @else if $name == archlinux {
+        @include archlinux.theme();
+    }
 
-@mixin theme_squirrel {
-    --background: #ffffff;
-    --text_color: #323232;
-    --directory_link_color: #d02474;
-    --directory_link_color_visited: #9b1985;
-    --file_link_color: #0086b3;
-    --file_link_color_visited: #974ec2;
-    --table_background: #ffffff;
-    --table_text_color: #323232;
-    --table_header_background: #323232;
-    --table_header_text_color: #f5f5f5;
-    --table_header_active_color: #ffffff;
-    --active_row_color: #f6f8fa;
-    --odd_row_background: #fbfbfb;
-    --even_row_background: #f2f2f2;
-    --root_link_color: #323232;
-    --download_button_background: #d02474;
-    --download_button_background_hover: #f52d8a;
-    --download_button_link_color: #ffffff;
-    --download_button_link_color_hover: #ffffff;
-    --back_button_background: #d02474;
-    --back_button_background_hover: #d02474;
-    --back_button_link_color: #ffffff;
-    --back_button_link_color_hover: #ffffff;
-    --date_text_color: #797979;
-    --at_color: #797979;
-    --switch_theme_background: #323232;
-    --switch_theme_link_color: #f5f5f5;
-    --switch_theme_active: #d02474;
-    --switch_theme_border: #49483e;
-    --change_theme_link_color: #f5f5f5;
-    --change_theme_link_color_hover: #f5f5f5;
-    --upload_text_color: #323232;
-    --upload_form_border_color: #d2d2d2;
-    --upload_form_background: #f2f2f2;
-    --upload_button_background: #d02474;
-    --upload_button_text_color: #ffffff;
-    --drag_background: #3333338f;
-    --drag_border_color: #ffffff;
-    --drag_text_color: #ffffff;
-    --size_background_color: #323232;
-    --size_text_color: #ffffff;
-    --error_color: #d02424;
-    --footer_color: #898989;
-}
+    @else if $name == monokai {
+        @include monokai.theme();
+    }
 
-@mixin theme_archlinux {
-    --background: #383c4a;
-    --text_color: #fefefe;
-    --directory_link_color: #03a9f4;
-    --directory_link_color_visited: #0388f4;
-    --file_link_color: #ea95ff;
-    --file_link_color_visited: #a595ff;
-    --table_background: #353946;
-    --table_text_color: #eeeeee;
-    --table_header_background: #5294e2;
-    --table_header_text_color: #eeeeee;
-    --table_header_active_color: #ffffff;
-    --active_row_color: #5194e259;
-    --odd_row_background: #404552;
-    --even_row_background: #4b5162;
-    --root_link_color: #abb2bb;
-    --download_button_background: #ea95ff;
-    --download_button_background_hover: #eea7ff;
-    --download_button_link_color: #ffffff;
-    --download_button_link_color_hover: #ffffff;
-    --back_button_background: #ea95ff;
-    --back_button_background_hover: #ea95ff;
-    --back_button_link_color: #ffffff;
-    --back_button_link_color_hover: #ffffff;
-    --date_text_color: #9ebbdc;
-    --at_color: #9ebbdc;
-    --switch_theme_background: #4b5162;
-    --switch_theme_link_color: #fefefe;
-    --switch_theme_active: #ea95ff;
-    --switch_theme_border: #6a728a;
-    --change_theme_link_color: #fefefe;
-    --change_theme_link_color_hover: #fefefe;
-    --upload_text_color: #fefefe;
-    --upload_form_border_color: #353946;
-    --upload_form_background: #4b5162;
-    --upload_button_background: #ea95ff;
-    --upload_button_text_color: #ffffff;
-    --drag_background: #3333338f;
-    --drag_border_color: #fefefe;
-    --drag_text_color: #fefefe;
-    --size_background_color: #5294e2;
-    --size_text_color: #fefefe;
-    --error_color: #e44b4b;
-    --footer_color: #8eabcc;
-}
+    @else if $name == zenburn {
+        @include zenburn.theme();
+    }
 
-@mixin theme_zenburn {
-    --background: #3f3f3f;
-    --text_color: #efefef;
-    --directory_link_color: #f0dfaf;
-    --directory_link_color_visited: #ebc390;
-    --file_link_color: #87d6d5;
-    --file_link_color_visited: #a7b9ec;
-    --table_background: #4a4949;
-    --table_text_color: #efefef;
-    --table_header_background: #7f9f7f;
-    --table_header_text_color: #efefef;
-    --table_header_active_color: #efef8f;
-    --active_row_color: #7e9f7f9c;
-    --odd_row_background: #777777;
-    --even_row_background: #5a5a5a;
-    --root_link_color: #dca3a3;
-    --download_button_background: #cc9393;
-    --download_button_background_hover: #dca3a3;
-    --download_button_link_color: #efefef;
-    --download_button_link_color_hover: #efefef;
-    --back_button_background: #cc9393;
-    --back_button_background_hover: #cc9393;
-    --back_button_link_color: #efefef;
-    --back_button_link_color_hover: #efefef;
-    --date_text_color: #cfbfaf;
-    --at_color: #cfbfaf;
-    --switch_theme_background: #4a4949;
-    --switch_theme_link_color: #efefef;
-    --switch_theme_active: #efef8f;
-    --switch_theme_border: #5a5a5a;
-    --change_theme_link_color: #efefef;
-    --change_theme_link_color_hover: #efefef;
-    --upload_text_color: #efefef;
-    --upload_form_border_color: #4a4949;
-    --upload_form_background: #777777;
-    --upload_button_background: #cc9393;
-    --upload_button_text_color: #efefef;
-    --drag_background: #3333338f;
-    --drag_border_color: #efefef;
-    --drag_text_color: #efefef;
-    --size_background_color: #7f9f7f;
-    --size_text_color: #efefef;
-    --error_color: #d06565;
-    --footer_color: #bfaf9f;
-}
-
-@mixin theme_monokai {
-    --background: #272822;
-    --text_color: #f8f8f2;
-    --directory_link_color: #f92672;
-    --directory_link_color_visited: #bc39a7;
-    --file_link_color: #a6e22e;
-    --file_link_color_visited: #4cb936;
-    --table_background: #3b3a32;
-    --table_text_color: #f8f8f0;
-    --table_header_background: #75715e;
-    --table_header_text_color: #f8f8f2;
-    --table_header_active_color: #e6db74;
-    --active_row_color: #ae81fe3d;
-    --odd_row_background: #3e3d32;
-    --even_row_background: #49483e;
-    --root_link_color: #66d9ef;
-    --download_button_background: #ae81ff;
-    --download_button_background_hover: #c6a6ff;
-    --download_button_link_color: #f8f8f0;
-    --download_button_link_color_hover: #f8f8f0;
-    --back_button_background: #ae81ff;
-    --back_button_background_hover: #ae81ff;
-    --back_button_link_color: #f8f8f0;
-    --back_button_link_color_hover: #f8f8f0;
-    --date_text_color: #66d9ef;
-    --at_color: #66d9ef;
-    --switch_theme_background: #3b3a32;
-    --switch_theme_link_color: #f8f8f2;
-    --switch_theme_active: #a6e22e;
-    --switch_theme_border: #49483e;
-    --change_theme_link_color: #f8f8f2;
-    --change_theme_link_color_hover: #f8f8f2;
-    --upload_text_color: #f8f8f2;
-    --upload_form_border_color: #3b3a32;
-    --upload_form_background: #49483e;
-    --upload_button_background: #ae81ff;
-    --upload_button_text_color: #f8f8f0;
-    --drag_background: #3333338f;
-    --drag_border_color: #f8f8f2;
-    --drag_text_color: #f8f8f2;
-    --size_background_color: #75715e;
-    --size_text_color: #f8f8f2;
-    --error_color: #d02929;
-    --footer_color: #56c9df;
-}
-
-
-
-// For each of the themes, define a placeholder selector containing
-// the themes variables. Then add selectors for body when the theme:
-// - has explicitly been activated by .theme_*
-// - is set as default theme by .default_theme_* and no other theme is active
-// to the placeholder selector list by means of @extend.
-@each $theme in $themes {
-    %theme_#{$theme} { @include theme_#{$theme}; }
-
-    body.theme_#{$theme} { @extend %theme_#{$theme}; }
-
-    #{body_not_themed()}.default_theme_#{$theme} {
-        @extend %theme_#{$theme};
+    @else {
+        @error "Invalid theme: #{$name}";
     }
 }
 
-// Do the same thing again for the dark mode default.
-// Since the media query doesn't affect specificity, all dark mode
-// defaults need to come after all light mode defaults to override
-// them when dark mode is enabled.
-@each $theme in $themes {
-    @media (prefers-color-scheme: dark) {
-        %theme_dark_#{$theme} { @include theme_#{$theme}; }
-    }
+%active_theme_link {
+    font-weight: bold;
+    color: var(--switch_theme_active);
+}
 
-    // this extension will still end up inside the media query,
-    // because that is where %theme_dark_* was defined
-    #{body_not_themed()}.default_theme_dark_#{$theme} {
-        @extend %theme_dark_#{$theme};
+// when no specific theme is applied, highlight the `default` theme button in
+// the theme menu
+body:not([data-theme]) nav .theme li[data-theme="default"] a {
+    @extend %active_theme_link;
+}
+
+@each $theme in $themes {
+    body[data-theme="#{$theme}"] {
+        @include theme($theme);
+        // highlight the currently active theme in the theme selection menu
+        nav .theme li[data-theme="#{$theme}"] a {
+            @extend %active_theme_link;
+        }
     }
 }

@@ -1,12 +1,8 @@
-use actix_web::dev::{Service, ServiceRequest, ServiceResponse};
-use actix_web::http::{header, StatusCode};
-use actix_web::{HttpRequest, HttpResponse};
-use futures::future::Either;
+use actix_web::{dev::ServiceRequest, HttpMessage};
+use actix_web_httpauth::extractors::basic::BasicAuth;
 use sha2::{Digest, Sha256, Sha512};
-use std::future::{ready, Future};
 
-use crate::errors::{self, ContextualError};
-use crate::renderer;
+use crate::errors::RuntimeError;
 
 #[derive(Clone, Debug)]
 /// HTTP Basic authentication parameters
@@ -15,20 +11,16 @@ pub struct BasicAuthParams {
     pub password: String,
 }
 
-impl BasicAuthParams {
-    fn try_from_request(req: &HttpRequest) -> actix_web::Result<Self> {
-        use actix_web::http::header::Header;
-        use actix_web_httpauth::headers::authorization::{Authorization, Basic};
-
-        let auth = Authorization::<Basic>::parse(req)?.into_scheme();
-        Ok(Self {
+impl From<BasicAuth> for BasicAuthParams {
+    fn from(auth: BasicAuth) -> Self {
+        Self {
             username: auth.user_id().to_string(),
-            password: auth.password().unwrap_or(&"".into()).to_string(),
-        })
+            password: auth.password().unwrap_or_default().to_string(),
+        }
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 /// `password` field of `RequiredAuth`
 pub enum RequiredAuthPassword {
     Plain(String),
@@ -36,7 +28,7 @@ pub enum RequiredAuthPassword {
     Sha512(Vec<u8>),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 /// Authentication structure to match `BasicAuthParams` against
 pub struct RequiredAuth {
     pub username: String,
@@ -44,7 +36,7 @@ pub struct RequiredAuth {
 }
 
 /// Return `true` if `basic_auth` is matches any of `required_auth`
-pub fn match_auth(basic_auth: BasicAuthParams, required_auth: &[RequiredAuth]) -> bool {
+pub fn match_auth(basic_auth: &BasicAuthParams, required_auth: &[RequiredAuth]) -> bool {
     required_auth
         .iter()
         .any(|RequiredAuth { username, password }| {
@@ -77,86 +69,25 @@ pub fn get_hash<T: Digest>(text: &str) -> Vec<u8> {
     hasher.finalize().to_vec()
 }
 
-/// When authentication succedes, return the request to be passed to downstream services.
-/// Otherwise, return an error response
-fn handle_auth(req: ServiceRequest) -> Result<ServiceRequest, ServiceResponse> {
-    let (req, pl) = req.into_parts();
+pub struct CurrentUser {
+    pub name: String,
+}
+
+pub async fn handle_auth(
+    req: ServiceRequest,
+    cred: BasicAuth,
+) -> actix_web::Result<ServiceRequest, (actix_web::Error, ServiceRequest)> {
     let required_auth = &req.app_data::<crate::MiniserveConfig>().unwrap().auth;
 
-    if required_auth.is_empty() {
-        // auth is disabled by configuration
-        return Ok(ServiceRequest::from_parts(req, pl));
-    } else if let Ok(cred) = BasicAuthParams::try_from_request(&req) {
-        if match_auth(cred, required_auth) {
-            return Ok(ServiceRequest::from_parts(req, pl));
-        }
+    req.extensions_mut().insert(CurrentUser {
+        name: cred.user_id().to_string(),
+    });
+
+    if match_auth(&cred.into(), required_auth) {
+        Ok(req)
+    } else {
+        Err((RuntimeError::InvalidHttpCredentials.into(), req))
     }
-
-    // auth failed; render and return the error response
-    let resp = HttpResponse::Unauthorized()
-        .append_header((
-            header::WWW_AUTHENTICATE,
-            header::HeaderValue::from_static("Basic realm=\"miniserve\""),
-        ))
-        .body(build_unauthorized_response(
-            &req,
-            ContextualError::InvalidHttpCredentials,
-            true,
-            StatusCode::UNAUTHORIZED,
-        ));
-
-    Err(ServiceResponse::new(req, resp))
-}
-
-pub fn auth_middleware<S>(
-    req: ServiceRequest,
-    srv: &S,
-) -> impl Future<Output = actix_web::Result<ServiceResponse>> + 'static
-where
-    S: Service<ServiceRequest, Response = ServiceResponse, Error = actix_web::Error>,
-    S::Future: 'static,
-{
-    match handle_auth(req) {
-        Ok(req) => Either::Left(srv.call(req)),
-        Err(resp) => Either::Right(ready(Ok(resp))),
-    }
-}
-
-/// Builds the unauthorized response body
-/// The reason why log_error_chain is optional is to handle cases where the auth pop-up appears and when the user clicks Cancel.
-/// In those case, we do not log the error to the terminal since it does not really matter.
-fn build_unauthorized_response(
-    req: &HttpRequest,
-    error: ContextualError,
-    log_error_chain: bool,
-    error_code: StatusCode,
-) -> String {
-    let state = req.app_data::<crate::MiniserveConfig>().unwrap();
-    let error = ContextualError::HttpAuthenticationError(Box::new(error));
-
-    if log_error_chain {
-        errors::log_error_chain(error.to_string());
-    }
-    let return_path = match state.random_route {
-        Some(ref random_route) => format!("/{}", random_route),
-        None => "/".to_string(),
-    };
-
-    renderer::render_error(
-        &error.to_string(),
-        error_code,
-        &return_path,
-        None,
-        None,
-        false,
-        false,
-        &state.favicon_route,
-        &state.css_route,
-        &state.default_color_scheme,
-        &state.default_color_scheme_dark,
-        state.hide_version_footer,
-    )
-    .into_string()
 }
 
 #[rustfmt::skip]
@@ -183,7 +114,7 @@ mod tests {
     fn test_get_hash(password: &str, hash_method: &str, hash: &str) {
         let hash_func = get_hash_func(hash_method);
         let expected = hex::decode(hash).expect("Provided hash is not a valid hex code");
-        let received = hash_func(&password.to_owned());
+        let received = hash_func(password);
         assert_eq!(received, expected);
     }
 
@@ -193,8 +124,8 @@ mod tests {
 
         let password = match encrypt {
             "plain" => Plain(password.to_owned()),
-            "sha256" => Sha256(get_hash::<sha2::Sha256>(&password.to_owned())),
-            "sha512" => Sha512(get_hash::<sha2::Sha512>(&password.to_owned())),
+            "sha256" => Sha256(get_hash::<sha2::Sha256>(password)),
+            "sha512" => Sha512(get_hash::<sha2::Sha512>(password)),
             _ => panic!("Unknown encryption type"),
         };
 
@@ -223,7 +154,7 @@ mod tests {
     ) {
         assert_eq!(
             match_auth(
-                BasicAuthParams {
+                &BasicAuthParams {
                     username: param_username.to_owned(),
                     password: param_password.to_owned(),
                 },
@@ -264,7 +195,7 @@ mod tests {
         password: &str,
     ) {
         assert!(match_auth(
-            BasicAuthParams {
+            &BasicAuthParams {
                 username: username.to_owned(),
                 password: password.to_owned(),
             },
@@ -275,7 +206,7 @@ mod tests {
     #[rstest]
     fn test_multiple_auth_wrong_username(account_sample: Vec<RequiredAuth>) {
         assert_eq!(match_auth(
-            BasicAuthParams {
+            &BasicAuthParams {
                 username: "unregistered user".to_owned(),
                 password: "pwd0".to_owned(),
             },
@@ -298,7 +229,7 @@ mod tests {
         password: &str,
     ) {
         assert_eq!(match_auth(
-            BasicAuthParams {
+            &BasicAuthParams {
                 username: username.to_owned(),
                 password: password.to_owned(),
             },

@@ -1,129 +1,128 @@
-use std::io;
-use std::io::Write;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::io::{self, IsTerminal, Write};
+use std::net::{IpAddr, SocketAddr, TcpListener};
 use std::thread;
 use std::time::Duration;
 
-use actix_web::web;
+use actix_files::NamedFile;
 use actix_web::{
-    http::{header::ContentType, StatusCode},
-    Responder,
+    dev::{fn_service, ServiceRequest, ServiceResponse},
+    guard,
+    http::{header::ContentType, Method},
+    middleware, web, App, HttpRequest, HttpResponse, Responder,
 };
-use actix_web::{middleware, App, HttpRequest, HttpResponse};
+use actix_web_httpauth::middleware::HttpAuthentication;
 use anyhow::Result;
+use clap::{crate_version, CommandFactory, Parser};
+use colored::*;
+use dav_server::{
+    actix::{DavRequest, DavResponse},
+    DavConfig, DavHandler, DavMethodSet,
+};
+use fast_qr::QRBuilder;
 use log::{error, warn};
-use structopt::clap::crate_version;
-use structopt::StructOpt;
-use yansi::{Color, Paint};
 
 mod archive;
 mod args;
 mod auth;
 mod config;
+mod consts;
 mod errors;
-mod file_upload;
+mod file_op;
+mod file_utils;
 mod listing;
 mod pipe;
 mod renderer;
+mod webdav_fs;
 
 use crate::config::MiniserveConfig;
-use crate::errors::ContextualError;
+use crate::errors::{RuntimeError, StartupError};
+use crate::webdav_fs::RestrictedFs;
+
+static STYLESHEET: &str = grass::include!("data/style.scss");
 
 fn main() -> Result<()> {
-    let args = args::CliArgs::from_args();
+    let args = args::CliArgs::parse();
 
     if let Some(shell) = args.print_completions {
-        args::CliArgs::clap().gen_completions_to("miniserve", shell, &mut std::io::stdout());
+        let mut clap_app = args::CliArgs::command();
+        let app_name = clap_app.get_name().to_string();
+        clap_complete::generate(shell, &mut clap_app, app_name, &mut io::stdout());
+        return Ok(());
+    }
+
+    if args.print_manpage {
+        let clap_app = args::CliArgs::command();
+        let man = clap_mangen::Man::new(clap_app);
+        man.render(&mut io::stdout())?;
         return Ok(());
     }
 
     let miniserve_config = MiniserveConfig::try_from_args(args)?;
 
-    match run(miniserve_config) {
-        Ok(()) => (),
-        Err(e) => errors::log_error_chain(e.to_string()),
-    }
+    run(miniserve_config).inspect_err(|e| {
+        errors::log_error_chain(e.to_string());
+    })?;
+
     Ok(())
 }
 
 #[actix_web::main(miniserve)]
-async fn run(miniserve_config: MiniserveConfig) -> Result<(), ContextualError> {
-    if cfg!(windows) && !Paint::enable_windows_ascii() {
-        Paint::disable();
-    }
-
+async fn run(miniserve_config: MiniserveConfig) -> Result<(), StartupError> {
     let log_level = if miniserve_config.verbose {
         simplelog::LevelFilter::Info
     } else {
         simplelog::LevelFilter::Warn
     };
 
-    if simplelog::TermLogger::init(
+    simplelog::TermLogger::init(
         log_level,
-        simplelog::Config::default(),
+        simplelog::ConfigBuilder::new()
+            .set_time_format_rfc2822()
+            .build(),
         simplelog::TerminalMode::Mixed,
-        simplelog::ColorChoice::Auto,
+        if io::stdout().is_terminal() {
+            simplelog::ColorChoice::Auto
+        } else {
+            simplelog::ColorChoice::Never
+        },
     )
-    .is_err()
-    {
-        simplelog::SimpleLogger::init(log_level, simplelog::Config::default())
-            .expect("Couldn't initialize logger")
+    .or_else(|_| simplelog::SimpleLogger::init(log_level, simplelog::Config::default()))
+    .expect("Couldn't initialize logger");
+
+    if miniserve_config.no_symlinks && miniserve_config.path.is_symlink() {
+        return Err(StartupError::NoSymlinksOptionWithSymlinkServePath(
+            miniserve_config.path.to_string_lossy().to_string(),
+        ));
     }
 
-    if miniserve_config.no_symlinks {
-        let is_symlink = miniserve_config
-            .path
-            .symlink_metadata()
-            .map_err(|e| {
-                ContextualError::IoError("Failed to retrieve symlink's metadata".to_string(), e)
-            })?
-            .file_type()
-            .is_symlink();
-
-        if is_symlink {
-            return Err(ContextualError::NoSymlinksOptionWithSymlinkServePath(
-                miniserve_config.path.to_string_lossy().to_string(),
-            ));
-        }
+    if miniserve_config.webdav_enabled && miniserve_config.path.is_file() {
+        return Err(StartupError::WebdavWithFileServePath(
+            miniserve_config.path.to_string_lossy().to_string(),
+        ));
     }
 
     let inside_config = miniserve_config.clone();
 
-    let interfaces = miniserve_config
-        .interfaces
-        .iter()
-        .map(|&interface| {
-            if interface == IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)) {
-                // If the interface is 0.0.0.0, we'll change it to 127.0.0.1 so that clicking the link will
-                // also work on Windows. Why can't Windows interpret 0.0.0.0?
-                "127.0.0.1".to_string()
-            } else if interface.is_ipv6() {
-                // If the interface is IPv6 then we'll print it with brackets so that it is clickable.
-                format!("[{}]", interface)
-            } else {
-                format!("{}", interface)
-            }
-        })
-        .collect::<Vec<String>>();
+    let canon_path = miniserve_config
+        .path
+        .canonicalize()
+        .map_err(|e| StartupError::IoError("Failed to resolve path to be served".to_string(), e))?;
 
-    let canon_path = miniserve_config.path.canonicalize().map_err(|e| {
-        ContextualError::IoError("Failed to resolve path to be served".to_string(), e)
-    })?;
-
-    if let Some(index_path) = &miniserve_config.index {
-        let has_index: std::path::PathBuf = [&canon_path, index_path].iter().collect();
-        if !has_index.exists() {
-            error!(
+    // warn if --index is specified but not found
+    if let Some(ref index) = miniserve_config.index {
+        if !canon_path.join(index).exists() {
+            warn!(
                 "The file '{}' provided for option --index could not be found.",
-                index_path.to_string_lossy()
+                index.to_string_lossy(),
             );
         }
     }
+
     let path_string = canon_path.to_string_lossy();
 
     println!(
         "{name} v{version}",
-        name = Paint::new("miniserve").bold(),
+        name = "miniserve".bold(),
         version = crate_version!()
     );
     if !miniserve_config.path_explicitly_chosen {
@@ -131,8 +130,8 @@ async fn run(miniserve_config: MiniserveConfig) -> Result<(), ContextualError> {
         // terminal, we should refuse to start for security reasons. This would be the case when
         // running miniserve as a service but forgetting to set the path. This could be pretty
         // dangerous if given with an undesired context path (for instance /root or /).
-        if !atty::is(atty::Stream::Stdout) {
-            return Err(ContextualError::NoExplicitPathAndNoTerminal);
+        if !io::stdout().is_terminal() {
+            return Err(StartupError::NoExplicitPathAndNoTerminal);
         }
 
         warn!("miniserve has been invoked without an explicit path so it will serve the current directory after a short delay.");
@@ -142,290 +141,303 @@ async fn run(miniserve_config: MiniserveConfig) -> Result<(), ContextualError> {
         print!("Starting server in ");
         io::stdout()
             .flush()
-            .map_err(|e| ContextualError::IoError("Failed to write data".to_string(), e))?;
+            .map_err(|e| StartupError::IoError("Failed to write data".to_string(), e))?;
         for c in "3… 2… 1… \n".chars() {
-            print!("{}", c);
+            print!("{c}");
             io::stdout()
                 .flush()
-                .map_err(|e| ContextualError::IoError("Failed to write data".to_string(), e))?;
+                .map_err(|e| StartupError::IoError("Failed to write data".to_string(), e))?;
             thread::sleep(Duration::from_millis(500));
         }
     }
-    let mut addresses = String::new();
-    for interface in &interfaces {
-        if !addresses.is_empty() {
-            addresses.push_str(", ");
-        }
-        let protocol = if miniserve_config.tls_rustls_config.is_some() {
-            "https"
-        } else {
-            "http"
-        };
-        addresses.push_str(&format!(
-            "{}",
-            Color::Green
-                .paint(format!(
-                    "{protocol}://{interface}:{port}",
-                    protocol = protocol,
-                    interface = &interface,
-                    port = miniserve_config.port
-                ))
-                .bold()
-        ));
 
-        if let Some(random_route) = miniserve_config.clone().random_route {
-            addresses.push_str(&format!(
-                "{}",
-                Color::Green
-                    .paint(format!("/{random_route}", random_route = random_route,))
-                    .bold()
-            ));
-        }
-    }
+    let display_urls = {
+        let (mut ifaces, wildcard): (Vec<_>, Vec<_>) = miniserve_config
+            .interfaces
+            .clone()
+            .into_iter()
+            .partition(|addr| !addr.is_unspecified());
 
-    let socket_addresses = interfaces
-        .iter()
-        .map(|interface| {
-            format!(
-                "{interface}:{port}",
-                interface = &interface,
-                port = miniserve_config.port,
-            )
-            .parse::<SocketAddr>()
-        })
-        .collect::<Result<Vec<SocketAddr>, _>>();
-
-    let socket_addresses = match socket_addresses {
-        Ok(addresses) => addresses,
-        Err(e) => {
-            // Note that this should never fail, since CLI parsing succeeded
-            // This means the format of each IP address is valid, and so is the port
-            // Valid IpAddr + valid port == valid SocketAddr
-            return Err(ContextualError::ParseError(
-                "string as socket address".to_string(),
-                e.to_string(),
-            ));
+        // Replace wildcard addresses with local interface addresses
+        if !wildcard.is_empty() {
+            let all_ipv4 = wildcard.iter().any(|addr| addr.is_ipv4());
+            let all_ipv6 = wildcard.iter().any(|addr| addr.is_ipv6());
+            ifaces = if_addrs::get_if_addrs()
+                .unwrap_or_else(|e| {
+                    error!("Failed to get local interface addresses: {}", e);
+                    Default::default()
+                })
+                .into_iter()
+                .map(|iface| iface.ip())
+                .filter(|ip| (all_ipv4 && ip.is_ipv4()) || (all_ipv6 && ip.is_ipv6()))
+                .collect();
+            ifaces.sort();
         }
+
+        ifaces
+            .into_iter()
+            .map(|addr| match addr {
+                IpAddr::V4(_) => format!("{}:{}", addr, miniserve_config.port),
+                IpAddr::V6(_) => format!("[{}]:{}", addr, miniserve_config.port),
+            })
+            .map(|addr| match miniserve_config.tls_rustls_config {
+                Some(_) => format!("https://{addr}"),
+                None => format!("http://{addr}"),
+            })
+            .map(|url| format!("{}{}", url, miniserve_config.route_prefix))
+            .collect::<Vec<_>>()
     };
+
+    let socket_addresses = miniserve_config
+        .interfaces
+        .iter()
+        .map(|&interface| SocketAddr::new(interface, miniserve_config.port))
+        .collect::<Vec<_>>();
+
+    let display_sockets = socket_addresses
+        .iter()
+        .map(|sock| sock.to_string().green().bold().to_string())
+        .collect::<Vec<_>>();
+
+    let stylesheet = web::Data::new(
+        [
+            STYLESHEET,
+            inside_config.default_color_scheme.css(),
+            inside_config.default_color_scheme_dark.css_dark().as_str(),
+        ]
+        .join("\n"),
+    );
 
     let srv = actix_web::HttpServer::new(move || {
         App::new()
             .wrap(configure_header(&inside_config.clone()))
             .app_data(inside_config.clone())
-            // we should use `actix_web_httpauth::middleware::HttpAuthentication`
-            // but it is unfortuantrly broken
-            // see: https://github.com/actix/actix-extras/issues/127
-            // TODO replace this when fixed upstream
-            .wrap_fn(auth::auth_middleware)
+            .app_data(stylesheet.clone())
+            .wrap_fn(errors::error_page_middleware)
             .wrap(middleware::Logger::default())
-            .route(
-                &format!("/{}", inside_config.favicon_route),
-                web::get().to(favicon),
+            .wrap(middleware::Condition::new(
+                miniserve_config.compress_response,
+                middleware::Compress::default(),
+            ))
+            .route(&inside_config.favicon_route, web::get().to(favicon))
+            .route(&inside_config.css_route, web::get().to(css))
+            .service(
+                web::scope(&inside_config.route_prefix)
+                    .wrap(middleware::Condition::new(
+                        !inside_config.auth.is_empty(),
+                        actix_web::middleware::Compat::new(HttpAuthentication::basic(
+                            auth::handle_auth,
+                        )),
+                    ))
+                    .configure(|c| configure_app(c, &inside_config)),
             )
-            .route(&format!("/{}", inside_config.css_route), web::get().to(css))
-            .configure(|c| configure_app(c, &inside_config))
             .default_service(web::get().to(error_404))
     });
 
-    #[cfg(feature = "tls")]
-    let srv = if let Some(tls_config) = miniserve_config.tls_rustls_config {
-        srv.bind_rustls(socket_addresses.as_slice(), tls_config)
-            .map_err(|e| ContextualError::IoError("Failed to bind server".to_string(), e))?
-            .shutdown_timeout(0)
-            .run()
-    } else {
-        srv.bind(socket_addresses.as_slice())
-            .map_err(|e| ContextualError::IoError("Failed to bind server".to_string(), e))?
-            .shutdown_timeout(0)
-            .run()
-    };
+    let srv = socket_addresses.iter().try_fold(srv, |srv, addr| {
+        let listener = create_tcp_listener(*addr)
+            .map_err(|e| StartupError::IoError(format!("Failed to bind server to {addr}"), e))?;
 
-    #[cfg(not(feature = "tls"))]
-    let srv = srv
-        .bind(socket_addresses.as_slice())
-        .map_err(|e| ContextualError::IoError("Failed to bind server".to_string(), e))?
-        .shutdown_timeout(0)
-        .run();
+        #[cfg(feature = "tls")]
+        let srv = match &miniserve_config.tls_rustls_config {
+            Some(tls_config) => srv.listen_rustls_0_23(listener, tls_config.clone()),
+            None => srv.listen(listener),
+        };
+
+        #[cfg(not(feature = "tls"))]
+        let srv = srv.listen(listener);
+
+        srv.map_err(|e| StartupError::IoError(format!("Failed to bind server to {addr}"), e))
+    })?;
+
+    let srv = srv.shutdown_timeout(0).run();
+
+    println!("Bound to {}", display_sockets.join(", "));
+
+    println!("Serving path {}", path_string.yellow().bold());
 
     println!(
-        "Serving path {path} at {addresses}",
-        path = Color::Yellow.paint(path_string).bold(),
-        addresses = addresses,
+        "Available at (non-exhaustive list):\n    {}\n",
+        display_urls
+            .iter()
+            .map(|url| url.green().bold().to_string())
+            .collect::<Vec<_>>()
+            .join("\n    "),
     );
 
-    if atty::is(atty::Stream::Stdout) {
-        println!("\nQuit by pressing CTRL-C");
+    // print QR code to terminal
+    if miniserve_config.show_qrcode && io::stdout().is_terminal() {
+        for url in display_urls
+            .iter()
+            .filter(|url| !url.contains("//127.0.0.1:") && !url.contains("//[::1]:"))
+        {
+            match QRBuilder::new(url.clone()).ecl(consts::QR_EC_LEVEL).build() {
+                Ok(qr) => {
+                    println!("QR code for {}:", url.green().bold());
+                    qr.print();
+                }
+                Err(e) => {
+                    error!("Failed to render QR to terminal: {:?}", e);
+                }
+            };
+        }
+    }
+
+    if io::stdout().is_terminal() {
+        println!("Quit by pressing CTRL-C");
     }
 
     srv.await
-        .map_err(|e| ContextualError::IoError("".to_owned(), e))
+        .map_err(|e| StartupError::IoError("".to_owned(), e))
+}
+
+/// Allows us to set low-level socket options
+///
+/// This mainly used to set `set_only_v6` socket option
+/// to get a consistent behavior across platforms.
+/// see: https://github.com/svenstaro/miniserve/pull/500
+fn create_tcp_listener(addr: SocketAddr) -> io::Result<TcpListener> {
+    use socket2::{Domain, Protocol, Socket, Type};
+    let socket = Socket::new(Domain::for_address(addr), Type::STREAM, Some(Protocol::TCP))?;
+    if addr.is_ipv6() {
+        socket.set_only_v6(true)?;
+    }
+    socket.set_reuse_address(true)?;
+    socket.bind(&addr.into())?;
+    socket.listen(1024 /* Default backlog */)?;
+    Ok(TcpListener::from(socket))
 }
 
 fn configure_header(conf: &MiniserveConfig) -> middleware::DefaultHeaders {
-    let headers = conf.clone().header;
-
-    let mut default_headers = middleware::DefaultHeaders::new();
-    for header in headers {
-        for (header_name, header_value) in header.into_iter() {
-            if let Some(header_name) = header_name {
-                default_headers = default_headers.header(&header_name, header_value);
-            }
-        }
-    }
-    default_headers
+    conf.header.iter().flatten().fold(
+        middleware::DefaultHeaders::new(),
+        |headers, (header_name, header_value)| headers.add((header_name, header_value)),
+    )
 }
 
 /// Configures the Actix application
+///
+/// This is where we configure the app to serve an index file, the file listing, or a single file.
 fn configure_app(app: &mut web::ServiceConfig, conf: &MiniserveConfig) {
-    let random_route = conf.random_route.clone().unwrap_or_default();
-    let uses_random_route = conf.random_route.clone().is_some();
-    let full_route = format!("/{}", random_route);
+    let dir_service = || {
+        // use routing guard so propfind and options requests fall through to the webdav handler
+        let mut files = actix_files::Files::new("", &conf.path)
+            .guard(guard::Any(guard::Get()).or(guard::Head()));
 
-    let upload_route = if let Some(random_route) = conf.random_route.clone() {
-        format!("/{}/upload", random_route)
-    } else {
-        "/upload".to_string()
-    };
-
-    let serve_path = {
-        let path = &conf.path;
-        let no_symlinks = conf.no_symlinks;
-        let show_hidden = conf.show_hidden;
-        let random_route = conf.random_route.clone();
-        let favicon_route = conf.favicon_route.clone();
-        let css_route = conf.css_route.clone();
-        let default_color_scheme = conf.default_color_scheme.clone();
-        let default_color_scheme_dark = conf.default_color_scheme_dark.clone();
-        let show_qrcode = conf.show_qrcode;
-        let file_upload = conf.file_upload;
-        let tar_enabled = conf.tar_enabled;
-        let tar_gz_enabled = conf.tar_gz_enabled;
-        let zip_enabled = conf.zip_enabled;
-        let dirs_first = conf.dirs_first;
-        let hide_version_footer = conf.hide_version_footer;
-        let title = conf.title.clone();
-
-        if path.is_file() {
-            None
-        } else {
-            let u_r = upload_route.clone();
-
-            // build `Files` service using configuraion parameters
-            let files = actix_files::Files::new(&full_route, path);
-            let files = match &conf.index {
-                Some(index_file) => files.index_file(index_file.to_string_lossy()),
-                None => files,
-            };
-            let files = match show_hidden {
-                true => files.use_hidden_files(),
-                false => files,
-            };
-            let files = files
-                .show_files_listing()
-                .files_listing_renderer(move |dir, req| {
-                    listing::directory_listing(
-                        dir,
-                        req,
-                        no_symlinks,
-                        show_hidden,
-                        file_upload,
-                        random_route.clone(),
-                        favicon_route.clone(),
-                        css_route.clone(),
-                        &default_color_scheme,
-                        &default_color_scheme_dark,
-                        show_qrcode,
-                        u_r.clone(),
-                        tar_enabled,
-                        tar_gz_enabled,
-                        zip_enabled,
-                        dirs_first,
-                        hide_version_footer,
-                        title.clone(),
-                    )
-                })
-                .prefer_utf8(true)
-                .redirect_to_slash_directory()
-                .default_handler(web::to(error_404));
-            Some(files)
+        // Use specific index file if one was provided.
+        if let Some(ref index_file) = conf.index {
+            files = files.index_file(index_file.to_string_lossy());
+            // Handle SPA option.
+            //
+            // Note: --spa requires --index in clap.
+            if conf.spa {
+                files = files.default_handler(
+                    NamedFile::open(conf.path.join(index_file))
+                        .expect("Can't open SPA index file."),
+                );
+            }
         }
+
+        // Handle --pretty-urls options.
+        //
+        // We rewrite the request to append ".html" to the path and serve the file. If the
+        // path ends with a `/`, we remove it before appending ".html".
+        //
+        // This is done to allow for pretty URLs, e.g. "/about" instead of "/about.html".
+        if conf.pretty_urls {
+            files = files.default_handler(fn_service(|req: ServiceRequest| async {
+                let (req, _) = req.into_parts();
+                let conf = req
+                    .app_data::<MiniserveConfig>()
+                    .expect("Could not get miniserve config");
+                let mut path_base = req.path()[1..].to_string();
+                if path_base.ends_with('/') {
+                    path_base.pop();
+                }
+                if !path_base.ends_with("html") {
+                    path_base = format!("{}.html", path_base);
+                }
+                let file = NamedFile::open_async(conf.path.join(path_base)).await?;
+                let res = file.into_response(&req);
+                Ok(ServiceResponse::new(req, res))
+            }));
+        }
+
+        if conf.show_hidden {
+            files = files.use_hidden_files();
+        }
+
+        let base_path = conf.path.clone();
+        let no_symlinks = conf.no_symlinks;
+        files
+            .show_files_listing()
+            .files_listing_renderer(listing::directory_listing)
+            .prefer_utf8(true)
+            .redirect_to_slash_directory()
+            .path_filter(move |path, _| {
+                // deny symlinks if conf.no_symlinks
+                !(no_symlinks && base_path.join(path).is_symlink())
+            })
     };
 
-    let favicon_route = conf.favicon_route.clone();
-    let css_route = conf.css_route.clone();
-
-    let default_color_scheme = conf.default_color_scheme.clone();
-    let default_color_scheme_dark = conf.default_color_scheme_dark.clone();
-    let hide_version_footer = conf.hide_version_footer;
-
-    if let Some(serve_path) = serve_path {
+    if conf.path.is_file() {
+        // Handle single files
+        app.service(web::resource(["", "/"]).route(web::to(listing::file_handler)));
+    } else {
         if conf.file_upload {
             // Allow file upload
-            app.service(
-                web::resource(&upload_route).route(web::post().to(move |req, payload| {
-                    file_upload::upload_file(
-                        req,
-                        payload,
-                        uses_random_route,
-                        favicon_route.clone(),
-                        css_route.clone(),
-                        default_color_scheme.clone(),
-                        default_color_scheme_dark.clone(),
-                        hide_version_footer,
-                    )
-                })),
-            )
-            // Handle directories
-            .service(serve_path);
-        } else {
-            // Handle directories
-            app.service(serve_path);
+            app.service(web::resource("/upload").route(web::post().to(file_op::upload_file)));
         }
-    } else {
-        // Handle single files
-        app.service(web::resource(&full_route).route(web::to(listing::file_handler)));
+        // Handle directories
+        app.service(dir_service());
+    }
+
+    if conf.webdav_enabled {
+        let fs = RestrictedFs::new(&conf.path, conf.show_hidden);
+
+        let dav_server = DavHandler::builder()
+            .filesystem(fs)
+            .methods(DavMethodSet::WEBDAV_RO)
+            .hide_symlinks(conf.no_symlinks)
+            .strip_prefix(conf.route_prefix.to_owned())
+            .build_handler();
+
+        app.app_data(web::Data::new(dav_server.clone()));
+
+        app.service(
+            // actix requires tail segment to be named, even if unused
+            web::resource("/{tail}*")
+                .guard(
+                    guard::Any(guard::Options())
+                        .or(guard::Method(Method::from_bytes(b"PROPFIND").unwrap())),
+                )
+                .to(dav_handler),
+        );
     }
 }
 
-async fn error_404(req: HttpRequest) -> HttpResponse {
-    let err_404 = ContextualError::RouteNotFoundError(req.path().to_string());
-    let conf = req.app_data::<MiniserveConfig>().unwrap();
-    let uses_random_route = conf.random_route.is_some();
-    let favicon_route = conf.favicon_route.clone();
-    let css_route = conf.css_route.clone();
-    let query_params = listing::extract_query_parameters(&req);
+async fn dav_handler(req: DavRequest, davhandler: web::Data<DavHandler>) -> DavResponse {
+    if let Some(prefix) = req.prefix() {
+        let config = DavConfig::new().strip_prefix(prefix);
+        davhandler.handle_with(config, req.request).await.into()
+    } else {
+        davhandler.handle(req.request).await.into()
+    }
+}
 
-    errors::log_error_chain(err_404.to_string());
-
-    actix_web::HttpResponse::NotFound().body(
-        renderer::render_error(
-            &err_404.to_string(),
-            StatusCode::NOT_FOUND,
-            "/",
-            query_params.sort,
-            query_params.order,
-            false,
-            !uses_random_route,
-            &favicon_route,
-            &css_route,
-            &conf.default_color_scheme,
-            &conf.default_color_scheme_dark,
-            conf.hide_version_footer,
-        )
-        .into_string(),
-    )
+async fn error_404(req: HttpRequest) -> Result<HttpResponse, RuntimeError> {
+    Err(RuntimeError::RouteNotFoundError(req.path().to_string()))
 }
 
 async fn favicon() -> impl Responder {
     let logo = include_str!("../data/logo.svg");
     HttpResponse::Ok()
         .insert_header(ContentType(mime::IMAGE_SVG))
-        .message_body(logo.into())
+        .body(logo)
 }
 
-async fn css() -> impl Responder {
-    let css = include_str!(concat!(env!("OUT_DIR"), "/style.css"));
+async fn css(stylesheet: web::Data<String>) -> impl Responder {
     HttpResponse::Ok()
         .insert_header(ContentType(mime::TEXT_CSS))
-        .message_body(css.into())
+        .body(stylesheet.to_string())
 }

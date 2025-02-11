@@ -1,9 +1,12 @@
-mod fixtures;
+use std::process::Command;
 
 use assert_cmd::prelude::*;
-use fixtures::Error;
-use std::process::Command;
-use structopt::clap::{crate_name, crate_version, Shell};
+use clap::{crate_name, crate_version, ValueEnum};
+use clap_complete::Shell;
+
+mod fixtures;
+
+use crate::fixtures::Error;
 
 #[test]
 /// Show help and exit.
@@ -31,10 +34,10 @@ fn version_shows() -> Result<(), Error> {
 #[test]
 /// Print completions and exit.
 fn print_completions() -> Result<(), Error> {
-    for shell in &Shell::variants() {
+    for shell in Shell::value_variants() {
         Command::cargo_bin("miniserve")?
             .arg("--print-completions")
-            .arg(&shell)
+            .arg(shell.to_string())
             .assert()
             .success();
     }

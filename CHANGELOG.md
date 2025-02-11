@@ -8,10 +8,119 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 <!-- next-header -->
 
 ## [Unreleased] - ReleaseDate
+- Add date pill and sort links for mobile views [#1473](https://github.com/svenstaro/miniserve/pull/1473) (thanks @Flat)
+
+## [0.29.0] - 2025-02-06
+- Make URL encoding fully WHATWG-compliant [#1454](https://github.com/svenstaro/miniserve/pull/1454) (thanks @cyqsimon)
+- Fix `OVERWRITE_FILES` env var not being prefixed by `MINISERVE_` [#1457](https://github.com/svenstaro/miniserve/issues/1457)
+- Change `font-weight` of regular files to be `normal` to improve readability [#1471](https://github.com/svenstaro/miniserve/pull/1471) (thanks @shaicoleman)
+- Add webdav support [#1415](https://github.com/svenstaro/miniserve/pull/1415) (thanks @ahti)
+- Move favicon and css to stable, non-random routes [#1472](https://github.com/svenstaro/miniserve/pull/1472) (thanks @ahti)
+
+## [0.28.0] - 2024-09-12
+- Fix wrapping text in mobile view when the file name too long [#1379](https://github.com/svenstaro/miniserve/pull/1379) (thanks @chaibiq)
+- Fix missing drag-form when dragging file in to browser [#1390](https://github.com/svenstaro/miniserve/pull/1390) (thanks @chaibiq)
+- Improve documentation for the --header parameter [#1389](https://github.com/svenstaro/miniserve/pull/1389) (thanks @orwithout)
+- Don't show mkdir option when the directory is not upload allowed [#1442](https://github.com/svenstaro/miniserve/pull/1442) (thanks @Atreyagaurav)
+
+## [0.27.1] - 2024-03-16
+- Add `Add file and folder symbols` [#1365](https://github.com/svenstaro/miniserve/pull/1365) (thanks @chaibiq)
+
+## [0.27.0] - 2024-03-16
+- Add `-C/--compress-response` to enable response compression [1315](https://github.com/svenstaro/miniserve/pull/1315) (thanks @zuisong)
+- Refactor errors [#1331](https://github.com/svenstaro/miniserve/pull/1331) (thanks @cyqsimon)
+- Add `-I/--disable-inexing` [#1329](https://github.com/svenstaro/miniserve/pull/1329) (thanks @dyc3)
+
+## [0.26.0] - 2024-01-13
+- Properly handle read-only errors on Windows [#1310](https://github.com/svenstaro/miniserve/pull/1310) (thanks @ViRb3)
+- Use `tokio::fs` instead of `std::fs` to enable async file operations [#445](https://github.com/svenstaro/miniserve/issues/445)
+- Add `-S`/`--default-sorting-method` and `-O`/`--default-sorting-order` flags [#1308](https://github.com/svenstaro/miniserve/pull/1308) (thanks @ElliottLandsborough)
+
+## [0.25.0] - 2024-01-07
+- Add `--pretty-urls` [#1193](https://github.com/svenstaro/miniserve/pull/1193) (thanks @nlopes)
+- Fix single quote display with `--show-wget-footer` [#1191](https://github.com/svenstaro/miniserve/pull/1191) (thanks @d-air1)
+- Remove header Content-Encoding when archiving [#1290](https://github.com/svenstaro/miniserve/pull/1290) (thanks @5long)
+- Prevent illegal request path from crashing program [#1285](https://github.com/svenstaro/miniserve/pull/1285) (thanks @cyqsimon)
+- Fixed issue where serving files with a newline would fail [#1294](https://github.com/svenstaro/miniserve/issues/1294)
+
+## [0.24.0] - 2023-07-06
+- Fix ANSI color codes are printed when not a tty [#1095](https://github.com/svenstaro/miniserve/pull/1095)
+- Allow parameters to be provided via environment variables [#1160](https://github.com/svenstaro/miniserve/pull/1160)
+
+## [0.23.2] - 2023-04-28
+- Build Windows build with static CRT [#1107](https://github.com/svenstaro/miniserve/pull/1107)
+
+## [0.23.1] - 2023-04-17
+- Add EC key support [#1080](https://github.com/svenstaro/miniserve/issues/1080)
+
+## [0.23.0] - 2023-03-01
+- Update to clap v4
+- Show localized datetime [#949](https://github.com/svenstaro/miniserve/pull/949) (thanks @IvkinStanislav)
+- Fix sorting breaks subdir downloading [#991](https://github.com/svenstaro/miniserve/pull/991) (thanks @Vam-Jam)
+- Fix wget footer [#1043](https://github.com/svenstaro/miniserve/pull/1043) (thanks @Yusuto)
+
+## [0.22.0] - 2022-09-20
+- Faster QR code generation [#848](https://github.com/svenstaro/miniserve/pull/848) (thanks @cyqsimon)
+- Make `--readme` support not only `README.md` but also `README` and `README.txt` rendered as
+  plaintext [#911](https://github.com/svenstaro/miniserve/pull/911) (thanks @Atreyagaurav)
+- Change `-u/--upload-files` slightly in the sense that it can now either be provided by itself as
+  before or receive a file path to restrict uploading to only that path. Can be provided multiple
+  times for multiple allowed paths [#858](https://github.com/svenstaro/miniserve/pull/858) (thanks
+  @jonasdiemer)
+
+## [0.21.0] - 2022-09-15
+- Fix bug where static files would be served incorrectly when using `--random-route` [#835](https://github.com/svenstaro/miniserve/pull/835) (thanks @solarknight)
+- Add `--readme` to render the README in the current directory after the file listing [#860](https://github.com/svenstaro/miniserve/pull/860) (thanks @Atreyagaurav)
+- Add more architectures (and also additional container images)
+
+## [0.20.0] - 2022-06-26
+- Fixed security issue where it was possible to upload files to locations pointed to by symlinks
+  even when symlinks were disabled [#781](https://github.com/svenstaro/miniserve/pull/781) (thanks @sheepy0125)
+- Added `--hide-theme-selector` flag to hide the theme selector functionality in the frontend [#805](https://github.com/svenstaro/miniserve/pull/805https://github.com/svenstaro/miniserve/pull/805) (thanks @flamingoodev)
+- Added `--mkdir` flag to allow for uploading directories [#781](https://github.com/svenstaro/miniserve/pull/781) (thanks @sheepy0125)
+
+## [0.19.5] - 2022-05-18
+- Fix security issue where `--no-symlinks` would only hide symlinks from listing but it would
+  still be possible to follow them if the path was known
+
+## [0.19.4] - 2022-04-02
+- Fix random route leaking on error pages [#764](https://github.com/svenstaro/miniserve/pull/764) (thanks @steffhip)
+
+## [0.19.3] - 2022-03-15
+- Allow to set the accept input attribute to arbitrary values using `-m` and `-M` [#755](https://github.com/svenstaro/miniserve/pull/755) (thanks @mayjs)
+
+## [0.19.2] - 2022-02-21
+- Add man page support via `--print-manpage` [#738](https://github.com/svenstaro/miniserve/pull/738)
+
+## [0.19.1] - 2022-02-16
+- Better MIME type guessing support due to updated mime_guess
+
+## [0.19.0] - 2022-02-06
+- Fix panic when using TLS in some instances [#670](https://github.com/svenstaro/miniserve/issues/670) (thanks @aliemjay)
+- Add `--route-prefix` to add a fixed route prefix [#728](https://github.com/svenstaro/miniserve/pull/728) (thanks @aliemjay and @Jikstra)
+- Allow tapping the whole row in mobile view [#729](https://github.com/svenstaro/miniserve/pull/729)
+
+## [0.18.0] - 2021-10-26
+- Add raw mode and raw mode footer display [#508](https://github.com/svenstaro/miniserve/pull/508) (thanks @Jikstra)
+- Add SPA mode [#515](https://github.com/svenstaro/miniserve/pull/515) (thanks @sinking-point)
+
+## [0.17.0] - 2021-09-04
+- Print QR codes on terminal [#524](https://github.com/svenstaro/miniserve/pull/524) (thanks @aliemjay)
+- Fix mobile layout info pills taking whole width [#591](https://github.com/svenstaro/miniserve/issues/591)
+- Fix security exploit when uploading is enabled [#590](https://github.com/svenstaro/miniserve/pull/590) [#518](https://github.com/svenstaro/miniserve/issues/518) (thanks @aliemjay)
+- Fix uploading to symlink directories [#590](https://github.com/svenstaro/miniserve/pull/590) [#466](https://github.com/svenstaro/miniserve/issues/466) (thanks @aliemjay)
+
+## [0.16.0] - 2021-08-31
 - Fix serving files with backslashes in their names [#578](https://github.com/svenstaro/miniserve/pull/578) (thanks @Jikstra)
 - Fix behavior of downloading symlinks by upgrading to actix-web 4 [#582](https://github.com/svenstaro/miniserve/pull/582) [#462](https://github.com/svenstaro/miniserve/issues/462) (thanks @aliemjay)
 - List directory if index file not found [#583](https://github.com/svenstaro/miniserve/pull/583) [#275](https://github.com/svenstaro/miniserve/pull/583) (thanks @aliemjay)
 - Add special colors for visited links [#521](https://github.com/svenstaro/miniserve/pull/521) (thanks @raffomania)
+- Switch from structopt to clap v3 [#587](https://github.com/svenstaro/miniserve/pull/587)
+
+  This enables slightly nicer help output as well as much better completions.
+- Fix network interface handling [#500](https://github.com/svenstaro/miniserve/pull/500) [#470](https://github.com/svenstaro/miniserve/issues/470) [#405](https://github.com/svenstaro/miniserve/issues/405) [#422](https://github.com/svenstaro/miniserve/issues/422) (thanks @aliemjay)
+- Implement show symlink destination [#542](https://github.com/svenstaro/miniserve/pull/542) [#499](https://github.com/svenstaro/miniserve/issues/499) (thanks @deantvv)
+- Fix error page not being correctly themed [#529](https://github.com/svenstaro/miniserve/pull/529) [#588](https://github.com/svenstaro/miniserve/issues/588) (@aliemjay)
 
 ## [0.15.0] - 2021-08-27
 - Add hardened systemd template unit file to `packaging/miniserve@.service`
@@ -103,7 +212,29 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Some theme related bug fixes (thanks @boastful-squirrel)
 
 <!-- next-url -->
-[Unreleased]: https://github.com/svenstaro/miniserve/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/svenstaro/miniserve/compare/v0.29.0...HEAD
+[0.29.0]: https://github.com/svenstaro/miniserve/compare/v0.28.0...v0.29.0
+[0.28.0]: https://github.com/svenstaro/miniserve/compare/v0.27.1...v0.28.0
+[0.27.1]: https://github.com/svenstaro/miniserve/compare/v0.27.0...v0.27.1
+[0.27.0]: https://github.com/svenstaro/miniserve/compare/v0.26.0...v0.27.0
+[0.26.0]: https://github.com/svenstaro/miniserve/compare/v0.25.0...v0.26.0
+[0.25.0]: https://github.com/svenstaro/miniserve/compare/v0.24.0...v0.25.0
+[0.24.0]: https://github.com/svenstaro/miniserve/compare/v0.23.2...v0.24.0
+[0.23.2]: https://github.com/svenstaro/miniserve/compare/v0.23.1...v0.23.2
+[0.23.1]: https://github.com/svenstaro/miniserve/compare/v0.23.0...v0.23.1
+[0.23.0]: https://github.com/svenstaro/miniserve/compare/v0.22.0...v0.23.0
+[0.22.0]: https://github.com/svenstaro/miniserve/compare/v0.21.0...v0.22.0
+[0.21.0]: https://github.com/svenstaro/miniserve/compare/v0.20.0...v0.21.0
+[0.20.0]: https://github.com/svenstaro/miniserve/compare/v0.19.5...v0.20.0
+[0.19.5]: https://github.com/svenstaro/miniserve/compare/v0.19.4...v0.19.5
+[0.19.4]: https://github.com/svenstaro/miniserve/compare/v0.19.3...v0.19.4
+[0.19.3]: https://github.com/svenstaro/miniserve/compare/v0.19.2...v0.19.3
+[0.19.2]: https://github.com/svenstaro/miniserve/compare/v0.19.1...v0.19.2
+[0.19.1]: https://github.com/svenstaro/miniserve/compare/v0.19.0...v0.19.1
+[0.19.0]: https://github.com/svenstaro/miniserve/compare/v0.18.0...v0.19.0
+[0.18.0]: https://github.com/svenstaro/miniserve/compare/v0.17.0...v0.18.0
+[0.17.0]: https://github.com/svenstaro/miniserve/compare/v0.16.0...v0.17.0
+[0.16.0]: https://github.com/svenstaro/miniserve/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/svenstaro/miniserve/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/svenstaro/miniserve/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/svenstaro/miniserve/compare/v0.12.1...v0.13.0
